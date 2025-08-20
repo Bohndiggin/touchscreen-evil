@@ -14,10 +14,9 @@ HID_CLASS = 0x03
 HID_SUBCLASS = 0x00
 HID_PROTOCOL = 0x00
 
-REPEAT_DELAY = 0.5
 MEDIA_KEY_TIMEOUT = 0.3
 DEBOUNCE_TIME = 0.05
-MEDIA_KEY_DEBOUNCE = 0.5
+REPEAT_DELAY = 0.5
 
 TOUCH_ZONES = [
     (300, 300, 1175, 1175, 0x2F, "["),
@@ -45,9 +44,7 @@ consumer_control = None
 last_touch_state = False
 last_key = None
 last_touch_time = 0
-last_media_key_time = 0
 last_state_change_time = 0
-last_media_key_sent = None
 
 def initialize_hid_devices():
     global keyboard, consumer_control
@@ -201,7 +198,7 @@ def find_touch_zone(x, y):
     return None, None
 
 def process_touch_report(data):
-    global last_touch_state, last_key, last_touch_time, last_media_key_time, last_state_change_time, last_media_key_sent
+    global last_touch_state, last_key, last_touch_time, last_state_change_time
     
     touched, x, y = parse_touchscreen_report(data)
     current_time = time.monotonic()
@@ -214,29 +211,22 @@ def process_touch_report(data):
     if touched:
         keycode, key_name = find_touch_zone(x, y)
         if keycode:
+            should_send = False
+            
             if keycode in MEDIA_KEYS:
-                if (touched and not last_touch_state and 
-                    (last_media_key_sent != keycode or 
-                     current_time - last_media_key_time >= MEDIA_KEY_DEBOUNCE)):
-                    print(f"Touch detected at ({x}, {y}) -> Sending media key '{key_name}'")
-                    send_key_press(keycode, key_name)
-                    last_key = keycode
-                    last_touch_time = current_time
-                    last_media_key_time = current_time
-                    last_media_key_sent = keycode
+                should_send = touched and not last_touch_state
             else:
-                if (not last_touch_state or 
-                    keycode != last_key or 
-                    current_time - last_touch_time >= REPEAT_DELAY):
-                    print(f"Touch detected at ({x}, {y}) -> Sending key '{key_name}'")
-                    send_key_press(keycode, key_name)
-                    last_key = keycode
-                    last_touch_time = current_time
+                should_send = (not last_touch_state or 
+                              keycode != last_key or 
+                              current_time - last_touch_time >= REPEAT_DELAY)
+            
+            if should_send:
+                print(f"Touch detected at ({x}, {y}) -> Sending key '{key_name}'")
+                send_key_press(keycode, key_name)
+                last_key = keycode
+                last_touch_time = current_time
         else:
             print(f"Touch detected at ({x}, {y}) -> No zone mapped")
-    
-    if not touched and last_touch_state:
-        last_media_key_sent = None
     
     last_touch_state = touched
     return touched

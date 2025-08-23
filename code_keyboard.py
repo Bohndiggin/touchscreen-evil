@@ -14,9 +14,8 @@ HID_CLASS = 0x03
 HID_SUBCLASS = 0x00
 HID_PROTOCOL = 0x00
 
-MEDIA_KEY_TIMEOUT = 0.3
 DEBOUNCE_TIME = 0.05
-REPEAT_DELAY = 0.5
+TOUCH_TIMEOUT = 0.1  # Release key if no touch reports for 100ms
 
 TOUCH_ZONES = [
     (300, 300, 1175, 1175, 0x2F, "["),
@@ -37,14 +36,13 @@ TOUCH_ZONES = [
     (2925, 2925, 3800, 3800, 0x4F, "Right Arrow"),
 ]
 
-MEDIA_KEYS = {0xCD, 0xB6, 0xB5}
 
 keyboard = None
 consumer_control = None
 last_touch_state = False
-last_key = None
-last_touch_time = 0
 last_state_change_time = 0
+last_touch_report_time = 0
+last_processed_touch = None
 
 def initialize_hid_devices():
     global keyboard, consumer_control
@@ -111,67 +109,6 @@ def find_touchscreen_and_endpoint():
     print(f"Scanned {device_count} devices, no suitable touchscreen found")
     return None, None, None
 
-def send_key_press(keycode, key_name):
-    if not keycode:
-        print("ERROR: Cannot send key - keycode is None or 0")
-        return
-
-    if keycode in MEDIA_KEYS:
-        _send_media_key(keycode, key_name)
-    else:
-        _send_keyboard_key(keycode, key_name)
-
-def _send_media_key(keycode, key_name):
-    if not consumer_control:
-        print("ERROR: Cannot send media key - no consumer control device available")
-        return
-        
-    print(f"Sending media key '{key_name}' (keycode: 0x{keycode:02x})...")
-    try:
-        report = bytearray(2)
-        report[0] = 5
-        
-        if keycode == 0xCD:
-            report[1] = 0x01
-        else:
-            print(f"Media key {key_name} not supported in minimal descriptor")
-            return
-        
-        print(f"Sending report: ID={report[0]}, bits: 0x{report[1]:02x}")
-        
-        consumer_control.send_report(report)
-        time.sleep(0.1)
-        
-        report[1] = 0
-        consumer_control.send_report(report)
-        time.sleep(0.05)
-        
-        print(f"Successfully sent media key '{key_name}'")
-    except Exception as e:
-        print(f"Error sending media key '{key_name}': {e}")
-
-def _send_keyboard_key(keycode, key_name):
-    if not keyboard:
-        print("ERROR: Cannot send key - no keyboard device available")
-        return
-
-    print(f"Sending key '{key_name}' (keycode: 0x{keycode:02x})...")
-    try:
-        report = bytearray(8)
-        report[0] = 0
-        report[1] = 0
-        report[2] = keycode
-        
-        keyboard.send_report(report)
-        time.sleep(0.05)
-        
-        report = bytearray(8)
-        keyboard.send_report(report)
-        time.sleep(0.01)
-        
-        print(f"Successfully sent key '{key_name}'")
-    except Exception as e:
-        print(f"Error sending key '{key_name}': {e}")
 
 def parse_touchscreen_report(data):
     if len(data) < 6:
@@ -198,38 +135,100 @@ def find_touch_zone(x, y):
     return None, None
 
 def process_touch_report(data):
-    global last_touch_state, last_key, last_touch_time, last_state_change_time
+    global last_touch_state, last_state_change_time, last_touch_report_time, last_processed_touch
     
     touched, x, y = parse_touchscreen_report(data)
     current_time = time.monotonic()
     
-    if touched != last_touch_state:
-        if current_time - last_state_change_time < DEBOUNCE_TIME:
-            return last_touch_state
-        last_state_change_time = current_time
-    
     if touched:
-        keycode, key_name = find_touch_zone(x, y)
-        if keycode:
-            should_send = False
+        last_touch_report_time = current_time
+        current_touch = (x, y)
+        
+        # Check if this is a new touch or same position being held
+        if not last_touch_state or (last_processed_touch and (
+            abs(current_touch[0] - last_processed_touch[0]) > 50 or 
+            abs(current_touch[1] - last_processed_touch[1]) > 50)):
             
-            if keycode in MEDIA_KEYS:
-                should_send = touched and not last_touch_state
+            # New touch or significantly moved - send key press
+            if current_time - last_state_change_time < DEBOUNCE_TIME:
+                return last_touch_state
+            last_state_change_time = current_time
+            
+            keycode, key_name = find_touch_zone(x, y)
+            if keycode:
+                print(f"Touch at ({x}, {y}) -> Single key press '{key_name}'")
+                send_single_key_press(keycode, key_name)
+                last_processed_touch = current_touch
             else:
-                should_send = (not last_touch_state or 
-                              keycode != last_key or 
-                              current_time - last_touch_time >= REPEAT_DELAY)
+                print(f"Touch at ({x}, {y}) -> No zone mapped")
             
-            if should_send:
-                print(f"Touch detected at ({x}, {y}) -> Sending key '{key_name}'")
-                send_key_press(keycode, key_name)
-                last_key = keycode
-                last_touch_time = current_time
-        else:
-            print(f"Touch detected at ({x}, {y}) -> No zone mapped")
+            last_touch_state = True
+    else:
+        # No touch detected - reset state immediately
+        if last_touch_state:
+            print("Touch released - ready for next touch")
+            last_touch_state = False
+            last_processed_touch = None
     
-    last_touch_state = touched
     return touched
+
+def send_single_key_press(keycode, key_name):
+    if not keycode:
+        print("ERROR: Cannot send key - keycode is None or 0")
+        return
+
+    if keycode == 0xCD:  # Play/Pause
+        _send_single_media_key(keycode, key_name)
+    else:
+        _send_single_keyboard_key(keycode, key_name)
+
+def _send_single_media_key(keycode, key_name):
+    if not consumer_control:
+        print("ERROR: Cannot send media key - no consumer control device available")
+        return
+        
+    print(f"Sending single media key '{key_name}' (keycode: 0x{keycode:02x})...")
+    try:
+        # Press
+        report = bytearray(2)
+        report[0] = 5
+        if keycode == 0xCD:
+            report[1] = 0x01
+        consumer_control.send_report(report)
+        time.sleep(0.05)
+        
+        # Release
+        report = bytearray(2)
+        report[0] = 5
+        report[1] = 0x00
+        consumer_control.send_report(report)
+        
+        print(f"Successfully sent single media key '{key_name}'")
+    except Exception as e:
+        print(f"Error sending media key '{key_name}': {e}")
+
+def _send_single_keyboard_key(keycode, key_name):
+    if not keyboard:
+        print("ERROR: Cannot send key - no keyboard device available")
+        return
+
+    print(f"Sending single key '{key_name}' (keycode: 0x{keycode:02x})...")
+    try:
+        # Press
+        report = bytearray(8)
+        report[0] = 0
+        report[1] = 0
+        report[2] = keycode
+        keyboard.send_report(report)
+        time.sleep(0.05)
+        
+        # Release
+        report = bytearray(8)
+        keyboard.send_report(report)
+        
+        print(f"Successfully sent single key '{key_name}'")
+    except Exception as e:
+        print(f"Error sending key '{key_name}': {e}")
 
 def display_touch_zones():
     print("Touch zones configured:")
@@ -245,13 +244,18 @@ def run_touch_event_loop(touchscreen_device, endpoint_addr, max_packet_size):
         while True:
             try:
                 buffer = bytearray(max_packet_size or 8)
-                bytes_read = touchscreen_device.read(endpoint_addr, buffer, timeout=1000)
+                bytes_read = touchscreen_device.read(endpoint_addr, buffer, timeout=100)
                 if bytes_read > 0:
                     process_touch_report(buffer[:bytes_read])
-                else:
-                    print("Read returned 0 bytes")
                     
             except usb.core.USBTimeoutError:
+                # Process timeout to handle touch state resets
+                current_time = time.monotonic()
+                global last_touch_state, last_touch_report_time
+                if current_time - last_touch_report_time > TOUCH_TIMEOUT:
+                    if last_touch_state:
+                        print("Touch timeout - ready for next touch")
+                        last_touch_state = False
                 print(".", end="")
                 continue
             except Exception as e:

@@ -47,11 +47,20 @@ class TouchscreenOverlay:
         zone_height = canvas_height // 4
         
         self.touch_zones = []
-        # Mirror the layout horizontally to match physical touchscreen
-        # Button layout: 1 5 9 13 / 2 6 10 14 / 3 7 11 15 / 4 8 12 16
-        buttons = ['Button1', 'Button5', 'Button9', 'Button13', 'Button2', 'Button6', 'Button10', 'Button14', 
-                  'Button3', 'Button7', 'Button11', 'Button15', 'Button4', 'Button8', 'Button12', 'Button16']
-        button_nums = [1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15, 4, 8, 12, 16]
+        # Touch zones with actual command mappings from code_keyboard.py TOUCH_ZONES
+        # Layout matches the 4x4 grid in order: row by row, left to right
+        commands = [
+            "[", "-", "<", "Play/Pause",           # Row 0
+            "]", "=", ">", "Left Arrow",           # Row 1 
+            "Prev Song", "Home", "Up Arrow", "Down Arrow",  # Row 2
+            "Next Song", "End", "Enter", "Right Arrow"      # Row 3
+        ]
+        keycodes = [
+            0x2F, 0x2D, 0x36, 0xCD,   # Row 0
+            0x30, 0x2E, 0x37, 0x50,   # Row 1
+            0xB6, 0x4A, 0x52, 0x51,   # Row 2
+            0xB5, 0x4D, 0x28, 0x4F    # Row 3
+        ]
         
         for row in range(4):
             for col in range(4):
@@ -60,8 +69,11 @@ class TouchscreenOverlay:
                 x2 = x1 + zone_width
                 y2 = y1 + zone_height
                 
-                idx = row * 4 + col
-                self.touch_zones.append((x1, y1, x2, y2, button_nums[idx], buttons[idx]))
+                # Pivot: first row becomes first column
+                # Original row 0 -> column 0, original row 1 -> column 1, etc.
+                original_idx = row * 4 + col
+                pivoted_idx = col * 4 + row
+                self.touch_zones.append((x1, y1, x2, y2, keycodes[pivoted_idx], commands[pivoted_idx]))
     
     def on_resize(self, event=None):
         """Handle window resize events"""
@@ -99,7 +111,7 @@ class TouchscreenOverlay:
             
         colors = self.generate_colors(len(self.touch_zones))
         
-        for i, (x1, y1, x2, y2, button_num, button_name) in enumerate(self.touch_zones):
+        for i, (x1, y1, x2, y2, keycode, command_name) in enumerate(self.touch_zones):
             color = colors[i]
             
             # Draw rectangle
@@ -124,7 +136,7 @@ class TouchscreenOverlay:
             # Draw button name
             self.canvas.create_text(
                 center_x, center_y - font_size,
-                text=f"{button_name}",
+                text=f"{command_name}",
                 fill='white',
                 font=('Arial', font_size, 'bold'),
                 tags=f"zone_{i}"
@@ -148,10 +160,10 @@ class TouchscreenOverlay:
                 tags=f"zone_{i}"
             )
             
-            # Draw button number
+            # Draw keycode
             self.canvas.create_text(
                 center_x, center_y + font_size,
-                text=f"Button #{button_num}",
+                text=f"0x{keycode:02x}",
                 fill='white',
                 font=('Arial', coord_font_size),
                 tags=f"zone_{i}"
@@ -179,9 +191,9 @@ class TouchscreenOverlay:
         """Handle mouse clicks to show which zone was clicked"""
         x, y = event.x, event.y
         if hasattr(self, 'touch_zones'):
-            for i, (x1, y1, x2, y2, button_num, button_name) in enumerate(self.touch_zones):
+            for i, (x1, y1, x2, y2, keycode, command_name) in enumerate(self.touch_zones):
                 if x1 <= x <= x2 and y1 <= y <= y2:
-                    print(f"Clicked zone {i+1}: {button_name} at ({x}, {y})")
+                    print(f"Clicked zone {i+1}: {command_name} at ({x}, {y})")
                     # Briefly highlight the clicked zone
                     self.highlight_zone(i)
                     break

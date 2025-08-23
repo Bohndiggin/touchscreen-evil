@@ -41,14 +41,9 @@ CONSUMER_CONTROL_REPORT_DESCRIPTOR = bytes((
     0x09, 0xCD,        #   Usage (Play/Pause)
     0x15, 0x00,        #   Logical Minimum (0)
     0x25, 0x01,        #   Logical Maximum (1)
-    0x75, 0x01,        #   Report Size (1)
+    0x75, 0x08,        #   Report Size (8)
     0x95, 0x01,        #   Report Count (1)
     0x81, 0x02,        #   Input (Data,Var,Abs)
-    
-    # Padding (7 bits to complete the byte)
-    0x75, 0x07,        #   Report Size (7)
-    0x95, 0x01,        #   Report Count (1)
-    0x81, 0x01,        #   Input (Const,Array,Abs)
     
     0xC0,              # End Collection
 ))
